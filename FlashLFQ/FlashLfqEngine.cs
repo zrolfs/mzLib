@@ -31,7 +31,8 @@ namespace FlashLFQ
         public readonly bool IdSpecificChargeState;
         public readonly bool RequireMonoisotopicMass;
         public readonly bool Normalize;
-        public readonly double MinDiscFactorToCutAt;
+        private const double MinDiscFactorToCutAtForValley = 0.75;
+        private const double MinDiscFactorToCutAtForAdjacentToValley = 0.6;
         public readonly bool AdvancedProteinQuant;
 
         // structures used in the FlashLFQ engine
@@ -97,7 +98,6 @@ namespace FlashLFQ
             MissedScansAllowed = 1;
             RtTol = 5.0;
             ErrorCheckAmbiguousMatches = true;
-            MinDiscFactorToCutAt = 0.6;
             AdvancedProteinQuant = advancedProteinQuant;
         }
 
@@ -300,7 +300,7 @@ namespace FlashLFQ
             var chromatographicPeaks = new ChromatographicPeak[ms2IdsForThisFile.Count];
 
             Parallel.ForEach(Partitioner.Create(0, ms2IdsForThisFile.Count),
-                new ParallelOptions { MaxDegreeOfParallelism = MaxThreads },
+                new ParallelOptions { MaxDegreeOfParallelism = 1 },
                 (range, loopState) =>
                 {
                     for (int i = range.Item1; i < range.Item2; i++)
@@ -332,6 +332,14 @@ namespace FlashLFQ
 
                             // filter by isotopic distribution
                             List<IsotopicEnvelope> isotopicEnvelopes = GetIsotopicEnvelopes(xic, identification, chargeState, true);
+                            List<double> TIC = new List<double>();
+                            List<double> InjTime = new List<double>();
+                            var asdf = _ms1Scans[fileInfo];
+                            foreach(var ie in isotopicEnvelopes)
+                            {
+                                TIC.Add(asdf[ie.IndexedPeak.ZeroBasedMs1ScanIndex].Tic);
+                                InjTime.Add(asdf[ie.IndexedPeak.ZeroBasedMs1ScanIndex].InjectionTime.Value);
+                            }
 
                             // add isotopic envelopes to the chromatographic peak
                             msmsFeature.IsotopicEnvelopes.AddRange(isotopicEnvelopes);
@@ -962,9 +970,9 @@ namespace FlashLFQ
                 return;
             }
 
-            var timePointsForApexZ = peak.IsotopicEnvelopes.Where(p => p.ChargeState == peak.Apex.ChargeState).ToList();
-            HashSet<int> scanNumbers = new HashSet<int>(timePointsForApexZ.Select(p => p.IndexedPeak.ZeroBasedMs1ScanIndex));
-            int apexIndex = timePointsForApexZ.IndexOf(peak.Apex);
+            var timePointsForThisZ = peak.IsotopicEnvelopes.Where(p => p.ChargeState == peak.Apex.ChargeState).ToList();
+            HashSet<int> scanNumbers = new HashSet<int>(timePointsForThisZ.Select(p => p.IndexedPeak.ZeroBasedMs1ScanIndex));
+            int apexIndex = timePointsForThisZ.IndexOf(peak.Apex);
             IsotopicEnvelope valleyTimePoint = null;
 
             // -1 checks the left side, +1 checks the right side
@@ -973,53 +981,66 @@ namespace FlashLFQ
             foreach (var iter in iters)
             {
                 valleyTimePoint = null;
+                IsotopicEnvelope secondValleyTimepoint = null;
                 int indexOfValley = 0;
 
-                for (int i = apexIndex + iter; i < timePointsForApexZ.Count && i >= 0; i += iter)
+                for (int i = apexIndex + iter; i < timePointsForThisZ.Count && i >= 0; i += iter)
                 {
-                    IsotopicEnvelope timepoint = timePointsForApexZ[i];
+                    IsotopicEnvelope timepoint = timePointsForThisZ[i];
 
+                    //if less than the current valley, set it.
                     if (valleyTimePoint == null || timepoint.Intensity < valleyTimePoint.Intensity)
                     {
                         valleyTimePoint = timepoint;
-                        indexOfValley = timePointsForApexZ.IndexOf(valleyTimePoint);
+                        indexOfValley = timePointsForThisZ.IndexOf(valleyTimePoint);
+                        secondValleyTimepoint = null; //clear the secondary timepoint
                     }
-
-                    double discriminationFactor =
-                        (timepoint.Intensity - valleyTimePoint.Intensity) / timepoint.Intensity;
-
-                    if (discriminationFactor > MinDiscFactorToCutAt &&
-                        (indexOfValley + iter < timePointsForApexZ.Count && indexOfValley + iter >= 0))
+                    else
                     {
-                        IsotopicEnvelope secondValleyTimepoint = timePointsForApexZ[indexOfValley + iter];
+                        double discriminationFactor =
+                            (timepoint.Intensity - valleyTimePoint.Intensity) / timepoint.Intensity;
 
-                        discriminationFactor =
-                            (timepoint.Intensity - secondValleyTimepoint.Intensity) / timepoint.Intensity;
-
-                        if (discriminationFactor > MinDiscFactorToCutAt)
+                        //if the current value is higher than the valley by the discriminatory factor
+                        if (discriminationFactor > MinDiscFactorToCutAtForValley &&
+                            (indexOfValley + 1 < timePointsForThisZ.Count && indexOfValley - 1 >= 0))
                         {
-                            cutThisPeak = true;
-                            break;
-                        }
-
-                        int nextMs1ScanNum = -1;
-                        for (int j = valleyTimePoint.IndexedPeak.ZeroBasedMs1ScanIndex - 1;
-                            j < _ms1Scans[peak.SpectraFileInfo].Length && j >= 0;
-                            j += iter)
-                        {
-                            if (_ms1Scans[peak.SpectraFileInfo][j].OneBasedScanNumber >= 0 &&
-                                _ms1Scans[peak.SpectraFileInfo][j].OneBasedScanNumber !=
-                                valleyTimePoint.IndexedPeak.ZeroBasedMs1ScanIndex)
+                            //check if a point on either side of the valley is also low enough
+                            if (secondValleyTimepoint == null)
                             {
-                                nextMs1ScanNum = j + 1;
+                                var rightSideOfValley = timePointsForThisZ[indexOfValley + 1];
+                                var leftSideOfValley = timePointsForThisZ[indexOfValley - 1];
+                                secondValleyTimepoint = rightSideOfValley.Intensity < leftSideOfValley.Intensity ? rightSideOfValley : leftSideOfValley;
+                            }
+
+                            discriminationFactor =
+                                (timepoint.Intensity - secondValleyTimepoint.Intensity) / timepoint.Intensity;
+
+                            if (discriminationFactor > MinDiscFactorToCutAtForAdjacentToValley)
+                            {
+                                cutThisPeak = true;
                                 break;
                             }
-                        }
 
-                        if (!scanNumbers.Contains(nextMs1ScanNum))
-                        {
-                            cutThisPeak = true;
-                            break;
+                            //check if there's a missing peak
+                            int nextMs1ScanNum = -1;
+                            for (int j = valleyTimePoint.IndexedPeak.ZeroBasedMs1ScanIndex - 1;
+                                j < _ms1Scans[peak.SpectraFileInfo].Length && j >= 0;
+                                j += iter)
+                            {
+                                if (_ms1Scans[peak.SpectraFileInfo][j].OneBasedScanNumber >= 0 &&
+                                    _ms1Scans[peak.SpectraFileInfo][j].OneBasedScanNumber !=
+                                    valleyTimePoint.IndexedPeak.ZeroBasedMs1ScanIndex)
+                                {
+                                    nextMs1ScanNum = j + 1;
+                                    break;
+                                }
+                            }
+
+                            if (!scanNumbers.Contains(nextMs1ScanNum))
+                            {
+                                cutThisPeak = true;
+                                break;
+                            }
                         }
                     }
                 }

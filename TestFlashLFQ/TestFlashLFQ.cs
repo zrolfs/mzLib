@@ -82,7 +82,7 @@ namespace Test
         public static void TestEvelopQuantification()
         {
             Loaders.LoadElements();
-            
+
             double monoIsotopicMass = 1350.65681;
             double massOfAveragine = 111.1254;
             double numberOfAveragines = monoIsotopicMass / massOfAveragine;
@@ -94,10 +94,10 @@ namespace Test
             double averageS = 0.0417 * numberOfAveragines;
 
             ChemicalFormula myFormula = ChemicalFormula.ParseFormula(
-                "C" + (int)Math.Round(averageC) + 
-                "H" + (int)Math.Round(averageH) + 
-                "O" + (int)Math.Round(averageO) + 
-                "N" + (int)Math.Round(averageN) + 
+                "C" + (int)Math.Round(averageC) +
+                "H" + (int)Math.Round(averageH) +
+                "O" + (int)Math.Round(averageO) +
+                "N" + (int)Math.Round(averageN) +
                 "S" + (int)Math.Round(averageS));
 
 
@@ -965,7 +965,7 @@ namespace Test
                 new Proteomics.AminoAcidPolymer.Peptide("PEPTIEDVVV").MonoisotopicMass, file2Rt[3] + 0.001, 1, new List<ProteinGroup> { pg });
             Identification id10 = new Identification(file2, "PEPTIEDVVVV", "PEPTIEDVVVV",
                 new Proteomics.AminoAcidPolymer.Peptide("PEPTIEDVVVV").MonoisotopicMass, file2Rt[4] + 0.001, 1, new List<ProteinGroup> { pg });
-            
+
             FlashLfqEngine engine = new FlashLfqEngine(new List<Identification> { id1, id2, id3, id4, id5, id6, id7, id9, id10 }, matchBetweenRuns: true);
             var results = engine.Run();
 
@@ -982,7 +982,7 @@ namespace Test
 
             Residue.AddNewResiduesToDictionary(new List<Residue> { new Residue("heavyLysine", 'a', "a", x.ThisChemicalFormula, ModificationSites.All) });
 
-            SpectraFileInfo fileInfo = new SpectraFileInfo(Path.Combine(TestContext.CurrentContext.TestDirectory,@"SilacTest.mzML"), "", 0, 0, 0);
+            SpectraFileInfo fileInfo = new SpectraFileInfo(Path.Combine(TestContext.CurrentContext.TestDirectory, @"SilacTest.mzML"), "", 0, 0, 0);
             FlashLfqEngine engine = new FlashLfqEngine(
                 new List<Identification>
                 {
@@ -998,5 +998,69 @@ namespace Test
             var results = engine.Run();
             Assert.IsTrue(results.PeptideModifiedSequences.Count == 2);
         }
+
+        [Test]
+        public static void TestSilacIntensity()
+        {
+            Loaders.LoadElements();
+
+            Residue x = new Residue("a", 'a', "a", Chemistry.ChemicalFormula.ParseFormula("C{13}6H12N{15}2O"), ModificationSites.All); //+8 lysine
+            Residue lightLysine = Residue.GetResidue('K');
+            Residue.AddNewResiduesToDictionary(new List<Residue> { new Residue("heavyLysine", 'a', "a", x.ThisChemicalFormula, ModificationSites.All) });
+
+            SpectraFileInfo fileInfo = new SpectraFileInfo(@"E:\ZR\MusSILAC\SILACValidation\Mixed_Ratios-1554501831373\Charger\11Sept2013_SILAC2Plex_1to1.raw", "", 0, 0, 0);
+            FlashLfqEngine engine = new FlashLfqEngine(
+                new List<Identification>
+                {
+                    new Identification(fileInfo,"NEATPEAEQVK","NEATPEAEQVK",1214.5812,10.59269,2,new List<FlashLFQ.ProteinGroup>{new FlashLFQ.ProteinGroup("P01027","C3","Mus") },null, true),
+                    new Identification(fileInfo,"NEATPEAEQVa","NEATPEAEQVa",1222.59209,10.41385,2,new List<FlashLFQ.ProteinGroup>{new FlashLFQ.ProteinGroup("P01027+8.014","C3","Mus") },null, true),
+                },
+                ppmTolerance: 5,
+                silent: true
+            );
+            var results = engine.Run();
+        }
+
+        //[Test]
+        //public static void TestSilacIntensity()
+        //{
+        //    Loaders.LoadElements();
+
+        //    Residue x = new Residue("a", 'a', "a", Chemistry.ChemicalFormula.ParseFormula("C{13}6H12N{15}2O"), ModificationSites.All); //+8 lysine
+        //    Residue lightLysine = Residue.GetResidue('K');
+        //    Residue.AddNewResiduesToDictionary(new List<Residue> { new Residue("heavyLysine", 'a', "a", x.ThisChemicalFormula, ModificationSites.All) });
+
+        //    SpectraFileInfo fileInfo = new SpectraFileInfo(@"E:\ZR\MusSILAC\SILACValidation\Mixed_Ratios-1554501831373\Charger\11Sept2013_SILAC2Plex_1to1.raw", "", 0, 0, 0);
+        //    List<Identification> identifications = new List<Identification>();
+        //    string[] lines = File.ReadAllLines(@"E:\ZR\MusSILAC\SILACValidation\Mixed_Ratios-1554501831373\Charger\2019-04-12-15-43-35\Task1-SearchTask\AllPeptides.psmtsv");
+        //    List<string> header = lines[0].Split('\t').ToList();
+        //    int baseSeqIndex = header.IndexOf("Base Sequence");
+        //    int fullSeqIndex = header.IndexOf("Full Sequence");
+        //    int massIndex = header.IndexOf("Precursor Mass");
+        //    int retTimeIndex = header.IndexOf("Scan Retention Time");
+        //    int chargeIndex = header.IndexOf("Precursor Charge");
+        //    int proteinIndex = header.IndexOf("Protein Accession");
+        //    int geneIndex = header.IndexOf("Gene Name");
+        //    int organismIndex = header.IndexOf("Organism Name");
+        //    int TDIndex = header.IndexOf("Decoy/Contaminant/Target");
+        //    int QIndex = header.IndexOf("QValue");
+
+        //    for (int i = 1; i < lines.Length; i++)
+        //    {
+        //        string[] line = lines[i].Split('\t');
+        //        if (line[TDIndex].Equals("T") && Convert.ToDouble(line[QIndex]) < 0.01)
+        //        {
+        //            string baseSequence = line[baseSeqIndex];
+        //            identifications.Add(new Identification(fileInfo, baseSequence, line[fullSeqIndex], line[massIndex], line[retTimeIndex], line[chargeIndex], null, useForProteinQuant = false));
+        //        }
+        //    }
+        //    FlashLfqEngine engine = new FlashLfqEngine(
+        //        identifications,
+        //        ppmTolerance: 5,
+        //        silent: true
+        //    );
+        //    var results = engine.Run();
+
+        //}
     }
 }

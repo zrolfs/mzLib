@@ -160,18 +160,19 @@ namespace FlashLFQ
                     continue;
                 }
 
-                scanInfo.Add(new Ms1ScanInfo(msDataScans[i].OneBasedScanNumber, scanIndex, msDataScans[i].RetentionTime));
+                MsDataScan currentScan = msDataScans[i];
+                scanInfo.Add(new Ms1ScanInfo(currentScan.OneBasedScanNumber, scanIndex, currentScan.RetentionTime, currentScan.TotalIonCurrent, currentScan.InjectionTime));
 
-                for (int j = 0; j < msDataScans[i].MassSpectrum.XArray.Length; j++)
+                for (int j = 0; j < currentScan.MassSpectrum.XArray.Length; j++)
                 {
-                    int roundedMz = (int)Math.Round(msDataScans[i].MassSpectrum.XArray[j] * BinsPerDalton, 0);
+                    int roundedMz = (int)Math.Round(currentScan.MassSpectrum.XArray[j] * BinsPerDalton, 0);
                     if (_indexedPeaks[roundedMz] == null)
                     {
                         _indexedPeaks[roundedMz] = new List<IndexedMassSpectralPeak>();
                     }
 
-                    _indexedPeaks[roundedMz].Add(new IndexedMassSpectralPeak(msDataScans[i].MassSpectrum.XArray[j],
-                        msDataScans[i].MassSpectrum.YArray[j], scanIndex, msDataScans[i].RetentionTime));
+                    _indexedPeaks[roundedMz].Add(new IndexedMassSpectralPeak(currentScan.MassSpectrum.XArray[j],
+                        currentScan.MassSpectrum.YArray[j], scanIndex, currentScan.RetentionTime));
                 }
 
                 scanIndex++;
