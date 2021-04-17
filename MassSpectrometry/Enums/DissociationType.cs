@@ -117,6 +117,7 @@ namespace MassSpectrometry
         /// Placeholder used to communicate to MetaMorpheus that the dissociation type 
         /// should be taken from the scan header instead of using a fixed, constant dissociation type
         /// </summary>
-        Autodetect
+        Autodetect,
+        ArbitraryTest
     }
 }
