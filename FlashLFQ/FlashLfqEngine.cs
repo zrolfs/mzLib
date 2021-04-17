@@ -26,6 +26,8 @@ namespace FlashLFQ
         public readonly bool IdSpecificChargeState;
         public readonly bool Normalize;
         public readonly double DiscriminationFactorToCutPeak;
+        public readonly bool AllowOverlappingEnvelopes; //used for silac with large peptides
+        public readonly bool MeasureStableIsotopeAbundance; //used when C13 abundance is not ~1.1%
 
         // MBR settings
         public readonly bool MatchBetweenRuns;
@@ -63,6 +65,8 @@ namespace FlashLFQ
             bool idSpecificChargeState = false,
             bool silent = false,
             int maxThreads = -1,
+            bool allowOverlappingEnvelopes = false,
+            bool measureStableIsotopeAbundance = false,
 
             // MBR settings
             bool matchBetweenRuns = false,
@@ -106,6 +110,7 @@ namespace FlashLFQ
             Normalize = normalize;
             MaxThreads = maxThreads;
             BayesianProteinQuant = bayesianProteinQuant;
+            MeasureStableIsotopeAbundance = measureStableIsotopeAbundance;
             PairedSamples = pairedSamples;
             ProteinQuantBaseCondition = proteinQuantBaseCondition;
             ProteinQuantFoldChangeCutoff = proteinQuantFoldChangeCutoff;
@@ -148,8 +153,34 @@ namespace FlashLFQ
                     continue;
                 }
 
-                // quantify peaks using this file's IDs first
-                QuantifyMs2IdentifiedPeptides(spectraFile);
+                var ms2IdsForThisFile = _allIdentifications.Where(p => p.FileInfo.Equals(spectraFile)).ToList();
+                if (MeasureStableIsotopeAbundance)
+                {
+                    //if we're doing a backwards experiment that creates different isotopic patterns
+                    //grab all of the "normal" unlabeled peptides
+                    //make them a little heavier on the c13 abundance
+                    double bestC13Abundance = 0.012; //normal is 0.011
+                    var carbon = PeriodicTable.GetElement("C");
+                    var isotopes = carbon.Isotopes.ToList();
+                    isotopes.First(p => p.Neutrons == 7).RelativeAbundance = bestC13Abundance;
+                    isotopes.First(p => p.Neutrons == 6).RelativeAbundance = 1 - bestC13Abundance;
+                    CalculateTheoreticalIsotopeDistributions();
+
+                    var lightMs2IdsForThisFile = ms2IdsForThisFile.Where(x => x.BaseSequence.Contains("K")).ToList();
+                    QuantifyMs2IdentifiedPeptides(spectraFile, false, lightMs2IdsForThisFile);
+
+                    //now that we've quantified new peptides being synthesized, quantify old (which are heavier)
+                    bestC13Abundance = 0.02;
+                    isotopes.First(p => p.Neutrons == 7).RelativeAbundance = bestC13Abundance;
+                    isotopes.First(p => p.Neutrons == 6).RelativeAbundance = 1 - bestC13Abundance;
+                    CalculateTheoreticalIsotopeDistributions();
+                    var heavyMs2IdsForThisFile = ms2IdsForThisFile.Where(x => !x.BaseSequence.Contains("K")).ToList();
+                    QuantifyMs2IdentifiedPeptides(spectraFile, false, heavyMs2IdsForThisFile);
+                }
+                else
+                {
+                    QuantifyMs2IdentifiedPeptides(spectraFile, true, ms2IdsForThisFile);
+                }
 
                 // write the indexed peaks for MBR later
                 if (MatchBetweenRuns)
@@ -344,14 +375,12 @@ namespace FlashLFQ
             }
         }
 
-        private void QuantifyMs2IdentifiedPeptides(SpectraFileInfo fileInfo)
+        private void QuantifyMs2IdentifiedPeptides(SpectraFileInfo fileInfo, bool filterEnvelopes, List<Identification> ms2IdsForThisFile)
         {
             if (!Silent)
             {
                 Console.WriteLine("Quantifying peptides for " + fileInfo.FilenameWithoutExtension);
             }
-
-            var ms2IdsForThisFile = _allIdentifications.Where(p => p.FileInfo.Equals(fileInfo)).ToList();
 
             if (!ms2IdsForThisFile.Any())
             {
@@ -395,7 +424,7 @@ namespace FlashLFQ
                             xic.RemoveAll(p => !ppmTolerance.Within(p.Mz.ToMass(chargeState), identification.PeakfindingMass));
 
                             // filter by isotopic distribution
-                            List<IsotopicEnvelope> isotopicEnvelopes = GetIsotopicEnvelopes(xic, identification, chargeState);
+                            List<IsotopicEnvelope> isotopicEnvelopes = GetIsotopicEnvelopes(xic, identification, chargeState, filterEnvelopes);
 
                             // add isotopic envelopes to the chromatographic peak
                             msmsFeature.IsotopicEnvelopes.AddRange(isotopicEnvelopes);
@@ -1029,8 +1058,10 @@ namespace FlashLFQ
             _results.Peaks[spectraFile] = peaks;
         }
 
-        public List<IsotopicEnvelope> GetIsotopicEnvelopes(List<IndexedMassSpectralPeak> xic, Identification identification, int chargeState)
+        public List<IsotopicEnvelope> GetIsotopicEnvelopes(List<IndexedMassSpectralPeak> xic, Identification identification, int chargeState, bool filterEnvelopes = true)
         {
+            double isotopicVarianceWithAverageine = filterEnvelopes ? 4.0 : 8.0;
+            double corrRequired = filterEnvelopes ? 0.7 : 0.1;
             var isotopicEnvelopes = new List<IsotopicEnvelope>();
             var isotopeMassShifts = _modifiedSequenceToIsotopicDistribution[identification.ModifiedSequence];
 
